@@ -119,7 +119,8 @@ services:
         autoconfigure: true
 
     Symfony\AI\Agent\Bridge\SimilaritySearch\SimilaritySearch:
-        $retriever: '@ai.retriever.blog'
+        $vectorizer: '@ai.vectorizer.openai'
+        $store: '@ai.store.chromadb.symfonycon'
 
     Symfony\AI\Store\Document\Loader\RssFeedLoader: ~
     Symfony\AI\Store\Document\Transformer\TextSplitTransformer: ~
