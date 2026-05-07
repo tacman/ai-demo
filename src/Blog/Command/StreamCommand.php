@@ -14,6 +14,7 @@ namespace App\Blog\Command;
 use Symfony\AI\Agent\AgentInterface;
 use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
+use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
 use Symfony\AI\Platform\Result\StreamResult;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Style\SymfonyStyle;
@@ -31,7 +32,7 @@ final readonly class StreamCommand
         $io->title('Stream Example Command');
         $io->text('This command demonstrates streaming output in the console.');
 
-        $io->comment('Make sure to have ChromaDB running and the blog indexed, see README.');
+        $io->comment('Make sure to have PostgreSQL running and the blog indexed, see README.');
         $io->comment('You can use -vvv or --profile to get more insights into the execution.');
 
         $question = $io->ask(
@@ -45,8 +46,10 @@ final readonly class StreamCommand
 
         \assert($result instanceof StreamResult);
 
-        foreach ($result->getContent() as $word) {
-            $io->write($word);
+        foreach ($result->getContent() as $delta) {
+            if ($delta instanceof TextDelta) {
+                $io->write((string) $delta);
+            }
         }
 
         $io->newLine(2);
