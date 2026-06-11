@@ -11,7 +11,9 @@
 
 namespace App\Tui\Command;
 
+use Symfony\AI\Agent\Agent;
 use Symfony\AI\Agent\AgentInterface;
+use Symfony\AI\Agent\InputProcessor\SystemPromptInputProcessor;
 use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
 use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
@@ -266,29 +268,104 @@ final class ChatTuiCommand extends Command
     }
 
     /**
-     * Short, human-readable blurbs for the agent picker — purpose + backend, so
-     * the list distinguishes task agents (blog/recipe/…) from the plain
-     * model-backend agents (chatgpt/cerebras) and the multi-agent plumbing.
-     * Mirrors config/packages/ai.yaml.
+     * Build "model — first prompt line" blurbs for the agent picker by reading
+     * each live agent's model and system prompt.
+     *
+     * NOTE: this uses reflection as a stopgap. AgentInterface exposes getName()
+     * but not the model, and SystemPromptInputProcessor keeps its prompt in a
+     * private readonly property with no getter — so there is no public way to
+     * read what the picker (and the bundle's own `ai:chat`) wants to show. See
+     * the upstream issue requesting public accessors.
      *
      * @return array<string, string>
      */
     private function agentDescriptions(): array
     {
-        return [
-            'blog' => 'RAG over the Symfony blog · OpenAI gpt-4.1',
-            'stream' => 'Streaming chat demo · OpenAI gpt-4.1',
-            'youtube' => 'YouTube transcript Q&A · OpenAI gpt-5-mini',
-            'recipe' => 'Cooking assistant · Cerebras gpt-oss-120b',
-            'wikipedia' => 'Wikipedia-grounded answers · OpenAI gpt-5-mini',
-            'speech' => 'Voice assistant (delegates to blog) · OpenAI gpt-5-mini',
-            'cerebras' => 'Plain chat · Cerebras gpt-oss-120b (free tier ~5 req/min)',
-            'chatgpt' => 'Plain chat · OpenAI gpt-4.1',
-            'orchestrator' => "Router for the 'support' multi-agent · OpenAI gpt-5-mini",
-            'technical' => "Tech-support handoff in 'support' · OpenAI gpt-5-mini",
-            'fallback' => "General fallback in 'support' · OpenAI gpt-5-mini",
-            'support' => 'Multi-agent: routes to technical/fallback',
-        ];
+        $out = [];
+        foreach (array_keys($this->agents->getProvidedServices()) as $name) {
+            $out[$name] = $this->describeAgent($this->agents->get($name)) ?: 'agent';
+        }
+
+        return $out;
+    }
+
+    private function describeAgent(object $agent): string
+    {
+        try {
+            $agent = $this->unwrapAgent($agent);
+
+            $model = method_exists($agent, 'getModel') ? (string) $agent->getModel() : '';
+            $promptLine = $this->firstPromptLine($this->systemPromptOf($agent));
+
+            return implode(' — ', array_filter([$model, $promptLine], static fn (string $v): bool => '' !== $v));
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+
+    /**
+     * Peel decorators (e.g. TraceableAgent) until we reach the concrete Agent.
+     */
+    private function unwrapAgent(object $agent): object
+    {
+        for ($i = 0; $i < 5 && !$agent instanceof Agent; ++$i) {
+            $inner = $this->readProperty($agent, 'agent');
+            if (!\is_object($inner)) {
+                break;
+            }
+            $agent = $inner;
+        }
+
+        return $agent;
+    }
+
+    private function systemPromptOf(object $agent): mixed
+    {
+        $processors = $this->readProperty($agent, 'inputProcessors');
+        if (!is_iterable($processors)) {
+            return null;
+        }
+
+        foreach ($processors as $processor) {
+            if ($processor instanceof SystemPromptInputProcessor) {
+                return $this->readProperty($processor, 'systemPrompt');
+            }
+        }
+
+        return null;
+    }
+
+    private function readProperty(object $object, string $property): mixed
+    {
+        for ($ref = new \ReflectionObject($object); $ref; $ref = $ref->getParentClass()) {
+            if ($ref->hasProperty($property)) {
+                $p = $ref->getProperty($property);
+                $p->setAccessible(true);
+
+                return $p->getValue($object);
+            }
+        }
+
+        return null;
+    }
+
+    private function firstPromptLine(mixed $prompt): string
+    {
+        if (\is_string($prompt)) {
+            $text = $prompt;
+        } elseif ($prompt instanceof \Stringable) {
+            $text = (string) $prompt;
+        } else {
+            return '';
+        }
+
+        foreach (preg_split('/\R/', trim($text)) ?: [] as $line) {
+            if ('' !== ($line = trim($line))) {
+                return $this->trim($line, 64);
+            }
+        }
+
+        return '';
     }
 
     /**
