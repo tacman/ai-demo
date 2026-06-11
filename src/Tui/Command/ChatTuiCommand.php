@@ -14,6 +14,8 @@ namespace App\Tui\Command;
 use Symfony\AI\Agent\Agent;
 use Symfony\AI\Agent\AgentInterface;
 use Symfony\AI\Agent\InputProcessor\SystemPromptInputProcessor;
+use Symfony\AI\Agent\Toolbox\AgentProcessor;
+use Symfony\AI\Agent\Toolbox\ToolboxInterface;
 use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
 use Symfony\AI\Platform\PlatformInterface;
@@ -330,15 +332,62 @@ final class ChatTuiCommand extends Command
             $md = "## {$name}\n\n";
             $md .= '' !== $model ? "**Model:** `{$model}`\n\n" : "_Multi-agent / no single model._\n\n";
             if ('' !== $capabilities) {
-                $md .= "**Capabilities:** {$capabilities}\n\n";
+                $md .= "**Accepts:** {$capabilities}\n\n";
             }
+
+            $tools = $this->agentTools($agent);
+            if ([] !== $tools) {
+                $md .= "**Tools:**\n\n";
+                foreach ($tools as $tool) {
+                    $md .= \sprintf("- `%s`%s\n", $tool['name'], '' !== $tool['description'] ? ' — '.$this->trim($tool['description'], 64) : '');
+                }
+                $md .= "\n";
+            }
+
             $md .= "**System prompt:**\n\n";
-            $md .= '' !== $prompt ? $this->trim($prompt, 700) : '_none configured_';
+            $md .= '' !== $prompt ? $this->trim($prompt, 600) : '_none configured_';
 
             return $md;
         } catch (\Throwable) {
             return "## {$name}\n\n_No details available._";
         }
+    }
+
+    /**
+     * The agent's tools (name + description), read from the tool-calling
+     * AgentProcessor's toolbox. Empty for agents configured with `tools: false`.
+     *
+     * @return list<array{name: string, description: string}>
+     */
+    private function agentTools(object $agent): array
+    {
+        try {
+            $processors = $this->readProperty($agent, 'inputProcessors');
+            if (!is_iterable($processors)) {
+                return [];
+            }
+
+            foreach ($processors as $processor) {
+                if (!$processor instanceof AgentProcessor) {
+                    continue;
+                }
+
+                $toolbox = $this->readProperty($processor, 'toolbox');
+                if (!$toolbox instanceof ToolboxInterface) {
+                    return [];
+                }
+
+                $tools = [];
+                foreach ($toolbox->getTools() as $tool) {
+                    $tools[] = ['name' => $tool->getName(), 'description' => $tool->getDescription()];
+                }
+
+                return $tools;
+            }
+        } catch (\Throwable) {
+        }
+
+        return [];
     }
 
     /**
