@@ -39,6 +39,7 @@
         "symfony/monolog-bundle": "^4.0",
         "symfony/runtime": "^8.0",
         "symfony/translation": "^8.0",
+        "symfony/tui": "^8.1",
         "symfony/twig-bundle": "^8.0",
         "symfony/uid": "^8.0",
         "symfony/ux-dropzone": "^2.31",
@@ -47,6 +48,7 @@
         "symfony/ux-turbo": "^2.31",
         "symfony/ux-typed": "^2.31",
         "symfony/yaml": "^8.0",
+        "tempest/highlight": "^2.26",
         "twig/extra-bundle": "^3.22.1",
         "twig/markdown-extra": "^3.22",
         "twig/twig": "^3.22"
