@@ -81,6 +81,12 @@ ai:
             prompt:
                 text: 'You are a helpful assistant running on Cerebras inference. Be concise and to the point.'
             tools: false
+        chatgpt:
+            platform: 'ai.platform.openai'
+            model: 'gpt-4.1'
+            prompt:
+                text: 'You are a helpful assistant running on OpenAI (ChatGPT). Be concise and to the point.'
+            tools: false
         # Multi-agent setup
         orchestrator:
             platform: 'ai.platform.openai'
