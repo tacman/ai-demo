@@ -16,6 +16,7 @@ use Symfony\AI\Agent\AgentInterface;
 use Symfony\AI\Agent\InputProcessor\SystemPromptInputProcessor;
 use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
+use Symfony\AI\Platform\PlatformInterface;
 use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
 use Symfony\AI\Platform\Result\Stream\Delta\ThinkingStart;
 use Symfony\AI\Platform\Result\Stream\Delta\ToolCallStart;
@@ -32,8 +33,10 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\DependencyInjection\Attribute\AutowireLocator;
 use Symfony\Component\Tui\Event\SelectEvent;
+use Symfony\Component\Tui\Event\SelectionChangeEvent;
 use Symfony\Component\Tui\Event\SubmitEvent;
 use Symfony\Component\Tui\Style\Border;
+use Symfony\Component\Tui\Style\Direction;
 use Symfony\Component\Tui\Style\Padding;
 use Symfony\Component\Tui\Style\Style;
 use Symfony\Component\Tui\Style\StyleSheet;
@@ -225,29 +228,45 @@ final class ChatTuiCommand extends Command
         if (\is_string($agentArg) && '' !== $agentArg) {
             $startChat($agentArg);
         } else {
-            $descriptions = $this->agentDescriptions();
+            $models = $this->agentModels();
             $items = array_map(
                 static fn (string $name): array => [
                     'value' => $name,
                     'label' => $name,
-                    'description' => $descriptions[$name] ?? 'agent',
+                    'description' => $models[$name] ?? '',
                 ],
                 $agentNames,
             );
 
-            $picker = new ContainerWidget();
-            $picker->addStyleClass('transcript');
-            $picker->add(new TextWidget('Select an agent to chat with:'));
-
+            // Left: the agent list. Right: live details for the highlighted agent.
+            $listPane = new ContainerWidget();
+            $listPane->addStyleClass('transcript');
+            $listPane->add(new TextWidget('Select an agent:'));
             $list = new SelectListWidget($items, \count($items));
-            $picker->add($list);
+            $listPane->add($list);
 
-            $hint = new TextWidget('↑/↓ + Enter: choose   ·   Esc: cancel');
+            $detail = new MarkdownWidget($this->agentDetailMarkdown($agentNames[0]));
+            $detailPane = new ContainerWidget();
+            $detailPane->addStyleClass('detail');
+            $detailPane->expandVertically(true);
+            $detailPane->add($detail);
+
+            $row = new ContainerWidget();
+            $row->setStyle(new Style(direction: Direction::Horizontal, gap: 1));
+            $row->expandVertically(true);
+            $row->add($listPane)->add($detailPane);
+
+            $hint = new TextWidget('↑/↓: browse   ·   Enter: choose   ·   Esc: cancel');
             $hint->addStyleClass('hint');
 
-            $tui->add($picker)->add($hint);
+            $tui->add($row)->add($hint);
             $tui->setFocus($list);
 
+            $list->onSelectionChange(function (SelectionChangeEvent $event) use ($tui, $detail): void {
+                $detail->setText($this->agentDetailMarkdown($event->getValue()));
+                $tui->requestRender();
+                $tui->processRender();
+            });
             $list->onSelect(static fn (SelectEvent $event) => $startChat($event->getValue()));
             $list->onCancel(static fn () => $tui->stop());
         }
@@ -262,42 +281,86 @@ final class ChatTuiCommand extends Command
         $styles = new StyleSheet();
         $styles->addRule('.transcript', new Style(padding: Padding::all(1), border: Border::all(1, 'rounded', 'cyan')));
         $styles->addRule('.debug', new Style(padding: Padding::all(1), border: Border::all(1, 'rounded', 'gray')));
+        $styles->addRule('.detail', new Style(padding: Padding::all(1), border: Border::all(1, 'rounded', 'gray')));
         $styles->addRule('.hint', new Style(color: 'gray', dim: true));
 
         return $styles;
     }
 
     /**
-     * Build "model — first prompt line" blurbs for the agent picker by reading
-     * each live agent's model and system prompt.
+     * Model name per agent, for the list's short description column.
      *
-     * NOTE: this uses reflection as a stopgap. AgentInterface exposes getName()
-     * but not the model, and SystemPromptInputProcessor keeps its prompt in a
-     * private readonly property with no getter — so there is no public way to
-     * read what the picker (and the bundle's own `ai:chat`) wants to show. See
-     * the upstream issue requesting public accessors.
+     * NOTE: this (and {@see agentDetailMarkdown}) uses reflection as a stopgap.
+     * AgentInterface exposes getName() but not the model, and
+     * SystemPromptInputProcessor keeps its prompt in a private readonly property
+     * with no getter — so there is no public way to read what the picker (and
+     * the bundle's own `ai:chat`) wants to show. See symfony/ai#2154.
      *
      * @return array<string, string>
      */
-    private function agentDescriptions(): array
+    private function agentModels(): array
     {
         $out = [];
         foreach (array_keys($this->agents->getProvidedServices()) as $name) {
-            $out[$name] = $this->describeAgent($this->agents->get($name)) ?: 'agent';
+            try {
+                $agent = $this->unwrapAgent($this->agents->get($name));
+                $out[$name] = method_exists($agent, 'getModel') ? (string) $agent->getModel() : '';
+            } catch (\Throwable) {
+                $out[$name] = '';
+            }
         }
 
         return $out;
     }
 
-    private function describeAgent(object $agent): string
+    /**
+     * Full details for the highlighted agent: model, model capabilities, and the
+     * complete system prompt. (Temperature isn't configured per-agent here, and
+     * the platform's Model carries no pricing, so neither is shown.)
+     */
+    private function agentDetailMarkdown(string $name): string
     {
         try {
-            $agent = $this->unwrapAgent($agent);
+            $agent = $this->unwrapAgent($this->agents->get($name));
 
             $model = method_exists($agent, 'getModel') ? (string) $agent->getModel() : '';
-            $promptLine = $this->firstPromptLine($this->systemPromptOf($agent));
+            $capabilities = $this->modelCapabilities($agent, $model);
+            $prompt = $this->systemPromptText($agent);
 
-            return implode(' — ', array_filter([$model, $promptLine], static fn (string $v): bool => '' !== $v));
+            $md = "## {$name}\n\n";
+            $md .= '' !== $model ? "**Model:** `{$model}`\n\n" : "_Multi-agent / no single model._\n\n";
+            if ('' !== $capabilities) {
+                $md .= "**Capabilities:** {$capabilities}\n\n";
+            }
+            $md .= "**System prompt:**\n\n";
+            $md .= '' !== $prompt ? $this->trim($prompt, 700) : '_none configured_';
+
+            return $md;
+        } catch (\Throwable) {
+            return "## {$name}\n\n_No details available._";
+        }
+    }
+
+    /**
+     * Comma-separated model capabilities (tool-calling, vision, …), resolved via
+     * the agent's platform model catalog. Empty if unavailable.
+     */
+    private function modelCapabilities(object $agent, string $model): string
+    {
+        if ('' === $model) {
+            return '';
+        }
+
+        try {
+            $platform = $this->readProperty($agent, 'platform');
+            if (!$platform instanceof PlatformInterface) {
+                return '';
+            }
+
+            $capabilities = $platform->getModelCatalog()->getModel($model)->getCapabilities();
+            $names = array_map(static fn (object $c): string => strtolower(str_replace('_', '-', $c->name)), $capabilities);
+
+            return implode(', ', $names);
         } catch (\Throwable) {
             return '';
         }
@@ -317,6 +380,20 @@ final class ChatTuiCommand extends Command
         }
 
         return $agent;
+    }
+
+    private function systemPromptText(object $agent): string
+    {
+        $prompt = $this->systemPromptOf($agent);
+
+        if (\is_string($prompt)) {
+            return trim($prompt);
+        }
+        if ($prompt instanceof \Stringable) {
+            return trim((string) $prompt);
+        }
+
+        return '';
     }
 
     private function systemPromptOf(object $agent): mixed
@@ -347,25 +424,6 @@ final class ChatTuiCommand extends Command
         }
 
         return null;
-    }
-
-    private function firstPromptLine(mixed $prompt): string
-    {
-        if (\is_string($prompt)) {
-            $text = $prompt;
-        } elseif ($prompt instanceof \Stringable) {
-            $text = (string) $prompt;
-        } else {
-            return '';
-        }
-
-        foreach (preg_split('/\R/', trim($text)) ?: [] as $line) {
-            if ('' !== ($line = trim($line))) {
-                return $this->trim($line, 64);
-            }
-        }
-
-        return '';
     }
 
     /**
