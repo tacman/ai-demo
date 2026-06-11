@@ -1,3 +1,10 @@
+# Blog RAG vector store — both backends are defined under `ai.store`; flip between
+# them by changing this one line (no env vars, no code). After switching, run
+# `bin/console ai:store:setup <id>` then `ai:store:index blog`.
+parameters:
+    app.blog_store: 'ai.store.sqlite.symfony_blog'
+    # app.blog_store: 'ai.store.postgres.symfony_blog'
+
 ai:
     platform:
         openai:
@@ -110,6 +117,16 @@ ai:
                 technical: ['bug', 'problem', 'technical', 'error', 'code', 'debug']
             fallback: 'fallback'
     store:
+        # Both stores are defined. Choose which one the blog RAG uses with the
+        # `app.blog_store` parameter at the top of this file (one line).
+        # SQLite (vec: false) needs no infrastructure — just var/blog.sqlite.
+        sqlite:
+            symfony_blog:
+                dsn: 'sqlite:%kernel.project_dir%/var/blog.sqlite'
+                table_name: 'symfony_blog'
+                vec: false
+                distance: 'cosine'
+        # PostgreSQL + pgvector (needs the pgvector extension; `docker compose up`).
         postgres:
             symfony_blog:
                 dbal_connection: 'doctrine.dbal.default_connection'
@@ -129,10 +146,10 @@ ai:
                 - 'Symfony\AI\Store\Document\Transformer\TextSplitTransformer'
                 - 'Symfony\AI\Store\Document\Transformer\TextTrimTransformer'
             vectorizer: 'ai.vectorizer.openai'
-            store: 'ai.store.postgres.symfony_blog'
+            store: '%app.blog_store%'
     retriever:
         blog:
-            store: 'ai.store.postgres.symfony_blog'
+            store: '%app.blog_store%'
             vectorizer: 'ai.vectorizer.openai'
 
 services:

@@ -22,6 +22,7 @@
         "symfony/ai-open-ai-platform": "^0.9",
         "symfony/ai-postgres-store": "^0.9",
         "symfony/ai-similarity-search-tool": "^0.9",
+        "symfony/ai-sqlite-store": "^0.9.0",
         "symfony/ai-store": "^0.9",
         "symfony/ai-wikipedia-tool": "^0.9",
         "symfony/asset": "^8.0",

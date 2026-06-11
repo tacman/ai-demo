@@ -30,7 +30,7 @@ This small demo sits on top of following technologies:
 
 ## Setup
 
-The setup is split into three parts, the Symfony application, the OpenAI configuration, and initializing PostgreSQL.
+The setup is split into three parts: the Symfony application, the OpenAI configuration, and initializing the vector store (SQLite by default — no infrastructure — or PostgreSQL).
 
 ### 1. Symfony App
 
@@ -67,14 +67,23 @@ symfony console debug:dotenv
 
 You should be able to see the `OPENAI_API_KEY` in the list of environment variables.
 
-### 3. PostgreSQL Vector Store Initialization
+### 3. Vector Store Initialization
 
-[PostgreSQL with pgvector](https://github.com/pgvector/pgvector) is used to store embeddings of the chatbot's context.
+The blog RAG demo stores embeddings in a vector store. Two backends are configured in `config/packages/ai.yaml`; pick one with the `app.blog_store` parameter at the top of that file — one line, no env vars:
 
-To initialize the vector store, you need to run the following command:
+```yaml
+parameters:
+    app.blog_store: 'ai.store.sqlite.symfony_blog'      # default — zero infrastructure
+    # app.blog_store: 'ai.store.postgres.symfony_blog'  # PostgreSQL + pgvector
+```
+
+- **SQLite (default)** — a single `var/blog.sqlite` file, no extension or services required (`vec: false`, similarity computed in PHP). Great for local development; `docker compose up -d` is not needed.
+- **PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)** — for production / larger corpora. Needs the Postgres container (`docker compose up -d`).
+
+Set up and index the blog — use the store id that matches your `app.blog_store` choice:
 
 ```shell
-symfony console ai:store:setup ai.store.postgres.symfony_blog
+symfony console ai:store:setup ai.store.sqlite.symfony_blog   # or ai.store.postgres.symfony_blog
 symfony console ai:store:index blog -vv
 ```
 
