@@ -33,8 +33,8 @@ ai:
             model: 'gpt-5-mini'
             tools: false
         recipe:
-            platform: 'ai.platform.openai'
-            model: 'gpt-5-mini'
+            platform: 'ai.platform.cerebras'
+            model: 'gpt-oss-120b'
             prompt:
                 text: 'You are a helpful cooking assistant. Provide detailed recipes based on user requests.'
             tools: false
@@ -75,6 +75,12 @@ ai:
                 tts_options:
                     voice: 'coral'
                     instructions: 'Speak in a cheerful and positive tone.'
+        cerebras:
+            platform: 'ai.platform.cerebras'
+            model: 'gpt-oss-120b'
+            prompt:
+                text: 'You are a helpful assistant running on Cerebras inference. Be concise and to the point.'
+            tools: false
         # Multi-agent setup
         orchestrator:
             platform: 'ai.platform.openai'
@@ -129,8 +135,7 @@ services:
         autoconfigure: true
 
     Symfony\AI\Agent\Bridge\SimilaritySearch\SimilaritySearch:
-        $vectorizer: '@ai.vectorizer.openai'
-        $store: '@ai.store.chromadb.symfonycon'
+        $retriever: '@ai.retriever.blog'
 
     Symfony\AI\Store\Document\Loader\RssFeedLoader: ~
     Symfony\AI\Store\Document\Transformer\TextSplitTransformer: ~
